@@ -1,0 +1,44 @@
+name: Windows Mozc commit diagnostic
+on:
+  push:
+    branches: [diagnose/windows-mozc-commit]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  diagnose:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    env:
+      LIBCLANG_PATH: 'C:\Program Files\LLVM\bin'
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.95.0'
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: '0.16.0'
+      - name: Build diagnostic Herdr
+        run: cargo build --locked --config 'profile.dev.package."*".opt-level=0'
+      - name: Install Mozc Readable
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/install-mozc-for-ime-ci.ps1 -Tag v3.35.6354-readable.1
+      - name: Install herdr-core
+        run: |
+          Invoke-WebRequest https://releases.herdr.dev/core/install.ps1 -OutFile "$env:RUNNER_TEMP/install-herdr-core.ps1"
+          & "$env:RUNNER_TEMP/install-herdr-core.ps1"
+      - name: Replay conversion into a scratch terminal
+        run: python scripts/windows-mozc-diagnostic.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-mozc-diagnostics
+          path: |
+            ime-diagnostics
+            mozc-readable-msi/install.log

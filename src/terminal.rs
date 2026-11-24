@@ -2362,7 +2362,15 @@ impl EntityInputHandler for TerminalView {
         // While the find field holds the keys, the input-method path must not
         // be a way around that (see `key_down`); with the terminal focused,
         // input methods type into the program as usual.
-        if !self.find_field_focused(window, cx) {
+        let find_focused = self.find_field_focused(window, cx);
+        if std::env::var_os("HERDR_IME_TRACE").is_some() {
+            eprintln!(
+                "[herdr-ime] terminal commit bytes={} find_focused={find_focused} attached={}",
+                text.len(),
+                self.grid.borrow().channel.is_some()
+            );
+        }
+        if !find_focused {
             self.send(text.as_bytes());
         }
         cx.notify();

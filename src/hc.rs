@@ -434,7 +434,14 @@ impl Core {
     }
 
     pub fn send(&self, channel: u32, kind: u8, payload: &[u8]) {
-        let _ = self.writer.send(encode(channel, kind, payload));
+        let result = self.writer.send(encode(channel, kind, payload));
+        if channel != 0 && kind == DATA && std::env::var_os("HERDR_IME_TRACE").is_some() {
+            eprintln!(
+                "[herdr-ime] core queue channel={channel} bytes={} queued={}",
+                payload.len(),
+                result.is_ok()
+            );
+        }
     }
 
     pub fn call(&self, method: &str, params: Value) -> Result<Value> {
