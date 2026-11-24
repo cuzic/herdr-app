@@ -25,18 +25,36 @@ jobs:
           persist-credentials: false
       - name: Add trace points before and after the TSF commit
         run: python scripts/instrument-mozc-commit.py mozc
+      - name: Restore the traced TIP binary
+        id: tip-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: mozc-tip64-trace.dll
+          key: traced-mozc-tip-windows-2022-v3.35.6354-readable.1-${{ hashFiles('scripts/instrument-mozc-commit.py') }}
       - uses: actions/cache@v4
+        if: steps.tip-cache.outputs.cache-hit != 'true'
         with:
           path: mozc/src/third_party_cache
           key: mozc-tip-dependencies-windows-2022-${{ hashFiles('mozc/src/build_tools/update_deps.py') }}
       - name: Prepare Mozc dependencies
+        if: steps.tip-cache.outputs.cache-hit != 'true'
         working-directory: mozc/src
         run: python build_tools/update_deps.py
       - name: Build the x64 TIP
+        if: steps.tip-cache.outputs.cache-hit != 'true'
         working-directory: mozc/src
         env:
           ANDROID_NDK_HOME: ''
         run: bazelisk build '//win32/tip:mozc_tip64' --config release_build
+      - name: Stage the built TIP
+        if: steps.tip-cache.outputs.cache-hit != 'true'
+        run: Copy-Item mozc/src/bazel-bin/win32/tip/mozc_tip64.dll mozc-tip64-trace.dll
+      - name: Save the traced TIP before replay
+        if: steps.tip-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: mozc-tip64-trace.dll
+          key: ${{ steps.tip-cache.outputs.cache-primary-key }}
       - name: Install Mozc Readable
         shell: powershell
         env:
@@ -45,11 +63,15 @@ jobs:
       - name: Install the instrumented TIP on the runner
         shell: powershell
         run: |
+          $key = 'HKLM:\SOFTWARE\Classes\CLSID\{AFC94560-63DA-488E-9227-B04F3EF34B5B}\InprocServer32'
+          $registered = Get-Item -LiteralPath $key
+          $original = $registered.GetValue('')
+          if (!$original -or !(Test-Path -LiteralPath $original)) { throw 'Registered TIP DLL missing' }
+          $dest = Join-Path (Split-Path $original) 'mozc_tip64_trace.dll'
+          Copy-Item -LiteralPath mozc-tip64-trace.dll -Destination $dest -Force
+          $registered.SetValue('', $dest)
+          if ((Get-Item -LiteralPath $key).GetValue('') -ne $dest) { throw 'TIP registration did not change' }
           Stop-Process -Name ctfmon -ErrorAction SilentlyContinue
-          $tip = Get-ChildItem mozc/src/bazel-bin/win32/tip -Filter mozc_tip64.dll -Recurse | Select-Object -First 1
-          if (!$tip) { throw 'Built TIP DLL missing' }
-          $dest = Join-Path ${env:ProgramFiles(x86)} 'Mozc Readable\mozc_tip64.dll'
-          Copy-Item -LiteralPath $tip.FullName -Destination $dest -Force
           Start-Process ctfmon.exe
       - name: Restore the known-good Herdr diagnostic executable
         env:
