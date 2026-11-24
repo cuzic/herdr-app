@@ -30,16 +30,19 @@ class Input(ct.Structure):
 def main():
     if os.environ.get("GITHUB_ACTIONS") != "true" or sys.platform != "win32":
         raise SystemExit("Run only on the disposable Windows Actions runner")
-    out = Path("ime-diagnostics").resolve()
+    fault = sys.argv[1] if len(sys.argv) > 1 else ""
+    if fault not in ("", "missing-result", "copy-error", "terminal-reject"):
+        raise SystemExit(f"Unknown diagnostic fault: {fault}")
+    out = (Path("ime-diagnostics") / (fault or "baseline")).resolve()
     out.mkdir(exist_ok=True)
     app = Path("target/debug/herdr-app.exe").resolve()
-    home = Path(os.environ["RUNNER_TEMP"]) / "herdr-ime-home"
+    home = Path(os.environ["RUNNER_TEMP"]) / ("herdr-ime-" + (fault or "baseline"))
     home.mkdir(exist_ok=True)
     (home / "shared.json").write_text(
         json.dumps({"frame.welcomed": True, "layout": "main"}), encoding="utf-8"
     )
     env = dict(os.environ, HERDR_APP_HOME=str(home), HC_SESSION="ime-ci",
-               HERDR_TELEMETRY="0", HERDR_IME_TRACE="1")
+               HERDR_TELEMETRY="0", HERDR_IME_TRACE="1", HERDR_IME_TEST_FAULT=fault)
     core_dir = Path(os.environ["LOCALAPPDATA"]) / "Programs/herdr-core"
     core = next((core_dir / name for name in ("hc.exe", "herdr-core.exe")
                  if (core_dir / name).is_file()), "hc.exe")
@@ -66,7 +69,7 @@ def main():
     with (out / "herdr.stdout").open("wb") as stdout, (out / "herdr.stderr").open("wb") as stderr:
         proc = subprocess.Popen([app], env=env, stdout=stdout, stderr=stderr)
         try:
-            run_trials(proc, app, env, out, user, owner, enum_callback)
+            run_trials(proc, app, env, out, user, owner, enum_callback, fault)
         except BaseException:
             stderr.flush()
             print((out / "herdr.stderr").read_bytes()[-9000:].decode(errors="replace"))
@@ -79,7 +82,7 @@ def main():
                 proc.wait(timeout=10)
 
 
-def run_trials(proc, app, env, out, user, owner, enum_callback):
+def run_trials(proc, app, env, out, user, owner, enum_callback, fault):
     windows = []
 
     @enum_callback
@@ -142,7 +145,7 @@ def run_trials(proc, app, env, out, user, owner, enum_callback):
         tap(0x0D)
 
     results = []
-    trials = [("control", True, 83)] + [
+    trials = [("forced", False, 83)] if fault else [("control", True, 83)] + [
         (f"implicit-{gap}-{attempt}", False, gap)
         for gap in (10, 83, 170) for attempt in range(3)
     ]
@@ -189,6 +192,18 @@ def run_trials(proc, app, env, out, user, owner, enum_callback):
         value = capture.read_text(encoding="utf-8") if capture.exists() else ""
         results.append((label, value))
         print(label, ascii(value), flush=True)
+
+    if fault:
+        _, received = results[0]
+        trace = (out / "herdr.stderr").read_text(encoding="utf-8", errors="replace")
+        if trace.count(f"[herdr-ime] injected {fault}") != 1:
+            raise SystemExit(f"INVALID: {fault} did not exercise exactly one commit")
+        semantic = "".join(received.splitlines()).replace("\x00", "")
+        print(f"FORCED {fault}: only_motto={semantic == 'もっと'} "
+              f"nul_count={received.count(chr(0))}", flush=True)
+        if semantic != "もっと":
+            raise SystemExit(f"Unexpected outcome for {fault}: {ascii(received)}")
+        return
 
     control = "".join(results[0][1].splitlines())
     if not control.endswith("もっと") or control == "もっと":

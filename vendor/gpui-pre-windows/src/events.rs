@@ -754,15 +754,22 @@ impl WindowsWindowInner {
             })?;
             Some(0)
         } else {
-            if lparam & GCS_RESULTSTR.0 > 0 {
-                let comp_result = parse_ime_composition_string(ctx, GCS_RESULTSTR)?;
+            let fault = std::env::var("HERDR_IME_TEST_FAULT").ok();
+            let combined = lparam & GCS_RESULTSTR.0 != 0 && lparam & GCS_COMPSTR.0 != 0;
+            let drop_result = combined && fault.as_deref() == Some("missing-result");
+            if drop_result {
+                eprintln!("[herdr-ime] injected missing-result");
+            }
+            if lparam & GCS_RESULTSTR.0 > 0 && !drop_result {
+                let fail_copy = combined && fault.as_deref() == Some("copy-error");
+                let comp_result = parse_ime_composition_string(ctx, GCS_RESULTSTR, fail_copy)?;
                 self.with_input_handler(|input_handler| {
                     input_handler
                         .replace_text_in_range(None, &String::from_utf16_lossy(&comp_result));
                 })?;
             }
             if lparam & GCS_COMPSTR.0 > 0 {
-                let comp_string = parse_ime_composition_string(ctx, GCS_COMPSTR)?;
+                let comp_string = parse_ime_composition_string(ctx, GCS_COMPSTR, false)?;
                 let caret_pos =
                     (!comp_string.is_empty() && lparam & GCS_CURSORPOS.0 > 0).then(|| {
                         let cursor_pos = retrieve_composition_cursor_position(ctx);
@@ -1924,7 +1931,11 @@ mod dead_key_tests {
     }
 }
 
-fn parse_ime_composition_string(ctx: HIMC, comp_type: IME_COMPOSITION_STRING) -> Option<Vec<u16>> {
+fn parse_ime_composition_string(
+    ctx: HIMC,
+    comp_type: IME_COMPOSITION_STRING,
+    fail_copy: bool,
+) -> Option<Vec<u16>> {
     unsafe {
         let string_len = ImmGetCompositionStringW(ctx, comp_type, None, 0);
         if std::env::var_os("HERDR_IME_TRACE").is_some() {
@@ -1932,12 +1943,17 @@ fn parse_ime_composition_string(ctx: HIMC, comp_type: IME_COMPOSITION_STRING) ->
         }
         if string_len >= 0 {
             let mut buffer = vec![0u8; string_len as usize + 2];
-            let copied = ImmGetCompositionStringW(
-                ctx,
-                comp_type,
-                Some(buffer.as_mut_ptr() as _),
-                string_len as _,
-            );
+            let copied = if fail_copy {
+                eprintln!("[herdr-ime] injected copy-error");
+                -2 // IMM_ERROR_GENERAL: leave the zero-initialized buffer untouched.
+            } else {
+                ImmGetCompositionStringW(
+                    ctx,
+                    comp_type,
+                    Some(buffer.as_mut_ptr() as _),
+                    string_len as _,
+                )
+            };
             if std::env::var_os("HERDR_IME_TRACE").is_some() {
                 eprintln!("[herdr-ime] read kind={} bytes={copied}", comp_type.0);
             }

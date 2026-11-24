@@ -96,6 +96,15 @@ jobs:
           & "$env:RUNNER_TEMP/install-herdr-core.ps1"
       - name: Replay conversion into a scratch terminal
         run: python scripts/windows-mozc-diagnostic.py
+      - name: Force each suspected commit failure
+        if: success()
+        run: |
+          $failed = $false
+          foreach ($fault in @('missing-result', 'copy-error', 'terminal-reject')) {
+            python scripts/windows-mozc-diagnostic.py $fault
+            if ($LASTEXITCODE -ne 0) { $failed = $true }
+          }
+          if ($failed) { exit 1 }
       - uses: actions/upload-artifact@v4
         if: always()
         with:

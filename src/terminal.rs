@@ -2362,7 +2362,12 @@ impl EntityInputHandler for TerminalView {
         // While the find field holds the keys, the input-method path must not
         // be a way around that (see `key_down`); with the terminal focused,
         // input methods type into the program as usual.
-        let find_focused = self.find_field_focused(window, cx);
+        let reject_commit = text == "人の数を"
+            && std::env::var("HERDR_IME_TEST_FAULT").as_deref() == Ok("terminal-reject");
+        if reject_commit {
+            eprintln!("[herdr-ime] injected terminal-reject");
+        }
+        let find_focused = reject_commit || self.find_field_focused(window, cx);
         if std::env::var_os("HERDR_IME_TRACE").is_some() {
             eprintln!(
                 "[herdr-ime] terminal commit bytes={} find_focused={find_focused} attached={}",
