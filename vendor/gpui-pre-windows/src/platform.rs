@@ -601,7 +601,7 @@ impl Platform for WindowsPlatform {
         unsafe {
             while GetMessageW(&mut msg, None, 0, 0).as_bool() {
                 crate::ime_compare::dispatch("main", &msg);
-                if translate_accelerator(&msg).is_none() {
+                if self.inner.translate_accelerator_for_comparison(&msg).is_none() {
                     _ = TranslateMessage(&msg);
                     DispatchMessageW(&msg);
                 }
@@ -1156,6 +1156,27 @@ impl WindowsPlatformInner {
         }))
     }
 
+    fn translate_accelerator_for_comparison(&self, msg: &MSG) -> Option<()> {
+        static DIRECT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if !*DIRECT.get_or_init(|| std::env::var_os("GPUI_IME_DIRECT_KEY").is_some()) {
+            return translate_accelerator(msg);
+        }
+        DEAD_KEYS.with(|state| state.observe(msg));
+        if msg.message != WM_KEYDOWN && msg.message != WM_SYSKEYDOWN {
+            return None;
+        }
+        let handles = self.raw_window_handles.upgrade()?;
+        let hwnd = handles
+            .read()
+            .iter()
+            .find(|window| window.as_raw() == msg.hwnd)?
+            .as_raw();
+        let window = window_from_hwnd(hwnd)?;
+        let handled = window.handle_keydown_msg(msg.wParam, msg.lParam) == Some(0);
+        crate::ime_compare::record("direct-key", format_args!("handled={handled}"));
+        handled.then_some(())
+    }
+
     /// Calls `project` to project to the corresponding callback field, removes it from callbacks, calls `f` with the callback and then puts the callback back.
     fn with_callback<T>(
         &self,
@@ -1260,7 +1281,7 @@ impl WindowsPlatformInner {
                     let mut msg = MSG::default();
                     let process_message = |msg: &_| {
                         crate::ime_compare::dispatch("foreground", msg);
-                        if translate_accelerator(msg).is_none() {
+                        if self.translate_accelerator_for_comparison(msg).is_none() {
                             _ = unsafe { TranslateMessage(msg) };
                             unsafe { DispatchMessageW(msg) };
                         }

@@ -34,7 +34,7 @@ def main():
     case = sys.argv[1] if len(sys.argv) > 1 else ""
     focus_change = case in ("focus-change", "focus-no-position", "focus-no-drain", "focus-prioritize-ime")
     burst_control = case == "burst-control"
-    ima = case == "ima"
+    ima = case in ("ima", "ima-direct", "ima-no-drain", "ima-prioritize")
     fault = "" if focus_change or burst_control or ima else case
     if fault not in ("", "missing-result", "copy-error", "terminal-reject"):
         raise SystemExit(f"Unknown diagnostic fault: {fault}")
@@ -50,9 +50,11 @@ def main():
                HERDR_TELEMETRY="0", GPUI_IME_COMPARE="1", HERDR_IME_TEST_FAULT=fault)
     if case == "focus-no-position":
         env["HERDR_IME_TEST_SKIP_POSITION"] = "1"
-    if case == "focus-no-drain":
+    if case == "ima-direct":
+        env["GPUI_IME_DIRECT_KEY"] = "1"
+    if case in ("focus-no-drain", "ima-no-drain"):
         env["HERDR_IME_TEST_SKIP_INPUT_DRAIN"] = "1"
-    if case == "focus-prioritize-ime":
+    if case in ("focus-prioritize-ime", "ima-prioritize"):
         env["HERDR_IME_TEST_PRIORITIZE_IME"] = "1"
     core_dir = Path(os.environ["LOCALAPPDATA"]) / "Programs/herdr-core"
     core = next((core_dir / name for name in ("hc.exe", "herdr-core.exe")
