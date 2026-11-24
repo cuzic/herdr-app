@@ -706,6 +706,13 @@ impl WindowsWindowInner {
             return;
         }
         self.state.ime_enabled.set(ime_enabled);
+        let trace_ime = std::env::var_os("HERDR_IME_TRACE").is_some();
+        if trace_ime {
+            eprintln!(
+                "[herdr-ime] association time={:?} enabled={ime_enabled}",
+                std::time::SystemTime::now()
+            );
+        }
         unsafe {
             if ime_enabled {
                 ImmAssociateContextEx(handle, HIMC::default(), IACE_DEFAULT)
@@ -717,9 +724,11 @@ impl WindowsWindowInner {
                 if GetFocus() == handle
                     && let Some(ctx) = ImeContext::get(handle)
                 {
-                    ImmNotifyIME(*ctx, NI_COMPOSITIONSTR, CPS_COMPLETE, 0)
-                        .ok()
-                        .log_err();
+                    let result = ImmNotifyIME(*ctx, NI_COMPOSITIONSTR, CPS_COMPLETE, 0);
+                    if trace_ime {
+                        eprintln!("[herdr-ime] focus completion accepted={}", result.as_bool());
+                    }
+                    result.ok().log_err();
                 }
                 ImmAssociateContextEx(handle, HIMC::default(), 0)
                     .ok()

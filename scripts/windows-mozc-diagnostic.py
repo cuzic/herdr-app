@@ -163,7 +163,8 @@ def run_trials(proc, app, env, out, user, owner, enum_callback, fault, focus_cha
     ]
     if focus_change:
         trials = [("control", True, 83)] + [
-            (f"focus-{gap}", False, gap) for gap in (83, 170, 350)
+            (f"focus-{gap}-{attempt}", False, gap)
+            for gap in (10, 83, 170, 350) for attempt in range(3)
         ]
     for label, mid_enter, gap_ms in trials:
         capture = out / f"{label}.txt"
@@ -220,9 +221,10 @@ def run_trials(proc, app, env, out, user, owner, enum_callback, fault, focus_cha
             command("pane.focus", terminal=terminal)
 
             def focus_roundtrip():
+                print(f"focus away {label} unix_ns={time.time_ns()}", flush=True)
                 command("pane.focus", terminal=other_terminal)
                 command("pane.focus", terminal=terminal)
-                print(f"focus roundtrip {label}", flush=True)
+                print(f"focus back {label} unix_ns={time.time_ns()}", flush=True)
 
         time.sleep(.5)
         print(f"trial {label} tick_ms={ct.windll.kernel32.GetTickCount() & 0xffffffff}", flush=True)
@@ -231,6 +233,9 @@ def run_trials(proc, app, env, out, user, owner, enum_callback, fault, focus_cha
             if capture.exists() and capture.stat().st_size:
                 break
             time.sleep(.25)
+        if focus_change and not mid_enter:
+            count = other_capture.stat().st_size if other_capture.exists() else 0
+            print(f"other pane {label} bytes={count}", flush=True)
         value = capture.read_text(encoding="utf-8") if capture.exists() else ""
         results.append((label, value))
         print(label, ascii(value), flush=True)
