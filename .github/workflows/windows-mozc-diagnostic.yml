@@ -78,6 +78,13 @@ jobs:
             target/debug/deps
             target/debug/.fingerprint
           key: ${{ steps.rust-cache.outputs.cache-primary-key }}
+      - name: Publish the diagnostic executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: herdr-ime-diagnostic-exe
+          path: target/debug/herdr-app.exe
+          if-no-files-found: error
+          retention-days: 7
       - name: Install Mozc Readable
         shell: powershell
         env:
