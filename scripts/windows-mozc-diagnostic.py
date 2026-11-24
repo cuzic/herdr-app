@@ -30,13 +30,15 @@ class Input(ct.Structure):
 def main():
     if os.environ.get("GITHUB_ACTIONS") != "true" or sys.platform != "win32":
         raise SystemExit("Run only on the disposable Windows Actions runner")
-    fault = sys.argv[1] if len(sys.argv) > 1 else ""
+    case = sys.argv[1] if len(sys.argv) > 1 else ""
+    focus_change = case == "focus-change"
+    fault = "" if focus_change else case
     if fault not in ("", "missing-result", "copy-error", "terminal-reject"):
         raise SystemExit(f"Unknown diagnostic fault: {fault}")
-    out = (Path("ime-diagnostics") / (fault or "baseline")).resolve()
+    out = (Path("ime-diagnostics") / (case or "baseline")).resolve()
     out.mkdir(parents=True, exist_ok=True)
     app = Path("target/debug/herdr-app.exe").resolve()
-    home = Path(os.environ["RUNNER_TEMP"]) / ("herdr-ime-" + (fault or "baseline"))
+    home = Path(os.environ["RUNNER_TEMP"]) / ("herdr-ime-" + (case or "baseline"))
     home.mkdir(exist_ok=True)
     (home / "shared.json").write_text(
         json.dumps({"frame.welcomed": True, "layout": "main"}), encoding="utf-8"
@@ -69,7 +71,7 @@ def main():
     with (out / "herdr.stdout").open("wb") as stdout, (out / "herdr.stderr").open("wb") as stderr:
         proc = subprocess.Popen([app], env=env, stdout=stdout, stderr=stderr)
         try:
-            run_trials(proc, app, env, out, user, owner, enum_callback, fault)
+            run_trials(proc, app, env, out, user, owner, enum_callback, fault, focus_change)
         except BaseException:
             stderr.flush()
             print((out / "herdr.stderr").read_bytes()[-9000:].decode(errors="replace"))
@@ -82,7 +84,7 @@ def main():
                 proc.wait(timeout=10)
 
 
-def run_trials(proc, app, env, out, user, owner, enum_callback, fault):
+def run_trials(proc, app, env, out, user, owner, enum_callback, fault, focus_change):
     windows = []
 
     @enum_callback
@@ -126,7 +128,14 @@ def run_trials(proc, app, env, out, user, owner, enum_callback, fault):
         (1981, 0x0D), (2022, -0x0D),
     ]
 
-    def replay(mid_enter, gap_ms):
+    def command(name, **args):
+        result = subprocess.run([app, "do", name, json.dumps(args)], env=env,
+                                capture_output=True, timeout=5)
+        if result.returncode:
+            raise SystemExit(f"INVALID: {name}: {result.stderr.decode(errors='replace')}")
+        return json.loads(result.stdout)
+
+    def replay(mid_enter, gap_ms, focus_roundtrip=None):
         tap(0xF2)
         time.sleep(.15)
         start = time.perf_counter()
@@ -139,8 +148,11 @@ def run_trials(proc, app, env, out, user, owner, enum_callback, fault):
                 send([(vk, up) for up in (False, True) for vk in keys])
             else:
                 send([(abs(events), events < 0)])
-                if events == -0x20 and mid_enter:
-                    tap(0x0D)
+                if events == -0x20:
+                    if mid_enter:
+                        tap(0x0D)
+                    if focus_roundtrip is not None:
+                        focus_roundtrip()
         time.sleep(.15)
         tap(0x0D)
 
@@ -149,6 +161,10 @@ def run_trials(proc, app, env, out, user, owner, enum_callback, fault):
         (f"implicit-{gap}-{attempt}", False, gap)
         for gap in (10, 83, 170) for attempt in range(3)
     ]
+    if focus_change:
+        trials = [("control", True, 83)] + [
+            (f"focus-{gap}", False, gap) for gap in (83, 170, 350)
+        ]
     for label, mid_enter, gap_ms in trials:
         capture = out / f"{label}.txt"
         ready = out / f"{label}.ready"
@@ -182,9 +198,35 @@ def run_trials(proc, app, env, out, user, owner, enum_callback, fault):
             time.sleep(.25)
         else:
             raise SystemExit("INVALID: scratch terminal did not start")
+        focus_roundtrip = None
+        if focus_change and not mid_enter:
+            terminal = json.loads(opened.stdout)["terminal"]
+            other_capture = out / f"{label}-other.txt"
+            other_ready = out / f"{label}-other.ready"
+            reader = (
+                "import msvcrt,pathlib;"
+                f"pathlib.Path({str(other_ready)!r}).touch();"
+                f"f=pathlib.Path({str(other_capture)!r}).open('w',encoding='utf-8');"
+                "exec('while True:\n f.write(msvcrt.getwch());f.flush()')"
+            )
+            other = command("pane.split", direction="right", argv=[sys.executable, "-c", reader])
+            other_terminal = other["terminal"]
+            for _ in range(40):
+                if other_ready.exists():
+                    break
+                time.sleep(.25)
+            else:
+                raise SystemExit("INVALID: second scratch terminal did not start")
+            command("pane.focus", terminal=terminal)
+
+            def focus_roundtrip():
+                command("pane.focus", terminal=other_terminal)
+                command("pane.focus", terminal=terminal)
+                print(f"focus roundtrip {label}", flush=True)
+
         time.sleep(.5)
         print(f"trial {label} tick_ms={ct.windll.kernel32.GetTickCount() & 0xffffffff}", flush=True)
-        replay(mid_enter, gap_ms)
+        replay(mid_enter, gap_ms, focus_roundtrip)
         for _ in range(40):
             if capture.exists() and capture.stat().st_size:
                 break
