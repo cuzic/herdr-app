@@ -1,7 +1,7 @@
 name: Windows Mozc commit diagnostic
 on:
   push:
-    branches: [diagnose/windows-ime-comparison]
+    branches: [diagnose/windows-mozc-commit]
   workflow_dispatch:
 concurrency:
   group: windows-mozc-${{ github.ref }}
