@@ -1271,8 +1271,19 @@ impl WindowsPlatformInner {
                     if peek_msg(&mut msg, PM_QS_PAINT) {
                         process_message(&msg);
                     }
-                    while peek_msg(&mut msg, PM_QS_INPUT) {
-                        process_message(&msg);
+                    if std::env::var_os("HERDR_IME_TEST_SKIP_INPUT_DRAIN").is_none() {
+                        let trace_ime = std::env::var_os("HERDR_IME_TRACE").is_some();
+                        while peek_msg(&mut msg, PM_QS_INPUT) {
+                            if trace_ime && matches!(msg.message, WM_KEYDOWN | WM_SYSKEYDOWN | WM_IME_COMPOSITION) {
+                                eprintln!(
+                                    "[herdr-ime] foreground-drain time={:?} msg={:#x} message_ms={}",
+                                    std::time::SystemTime::now(),
+                                    msg.message,
+                                    msg.time
+                                );
+                            }
+                            process_message(&msg);
+                        }
                     }
                     // Allow the main loop to process other gpui events before going back into `run_foreground_task`
                     unsafe {

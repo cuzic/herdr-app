@@ -31,7 +31,7 @@ def main():
     if os.environ.get("GITHUB_ACTIONS") != "true" or sys.platform != "win32":
         raise SystemExit("Run only on the disposable Windows Actions runner")
     case = sys.argv[1] if len(sys.argv) > 1 else ""
-    focus_change = case in ("focus-change", "focus-no-position")
+    focus_change = case in ("focus-change", "focus-no-position", "focus-no-drain")
     burst_control = case == "burst-control"
     ima = case == "ima"
     fault = "" if focus_change or burst_control or ima else case
@@ -49,6 +49,8 @@ def main():
                HERDR_TELEMETRY="0", HERDR_IME_TRACE="1", HERDR_IME_TEST_FAULT=fault)
     if case == "focus-no-position":
         env["HERDR_IME_TEST_SKIP_POSITION"] = "1"
+    if case == "focus-no-drain":
+        env["HERDR_IME_TEST_SKIP_INPUT_DRAIN"] = "1"
     core_dir = Path(os.environ["LOCALAPPDATA"]) / "Programs/herdr-core"
     core = next((core_dir / name for name in ("hc.exe", "herdr-core.exe")
                  if (core_dir / name).is_file()), "hc.exe")
