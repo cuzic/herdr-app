@@ -69,7 +69,7 @@ jobs:
           if (!$original -or !(Test-Path -LiteralPath $original)) { throw 'Registered TIP DLL missing' }
           $dest = Join-Path (Split-Path $original) 'mozc_tip64_trace.dll'
           Copy-Item -LiteralPath mozc-tip64-trace.dll -Destination $dest -Force
-          $registered.SetValue('', $dest)
+          Set-Item -LiteralPath $key -Value $dest
           if ((Get-Item -LiteralPath $key).GetValue('') -ne $dest) { throw 'TIP registration did not change' }
           Stop-Process -Name ctfmon -ErrorAction SilentlyContinue
           Start-Process ctfmon.exe
