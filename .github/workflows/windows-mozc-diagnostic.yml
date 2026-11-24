@@ -23,9 +23,17 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: '0.16.0'
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: windows-mozc-rust-1.95-zig-0.16-${{ hashFiles('Cargo.lock') }}
       - name: Build diagnostic Herdr
         run: cargo build --locked --config 'profile.dev.package."*".opt-level=0'
       - name: Install Mozc Readable
+        shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
         run: ./scripts/install-mozc-for-ime-ci.ps1 -Tag v3.35.6354-readable.1
