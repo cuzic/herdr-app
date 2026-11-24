@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+import uuid
 
 
 class Keyboard(ct.Structure):
@@ -45,7 +46,7 @@ def main():
     (home / "shared.json").write_text(
         json.dumps({"frame.welcomed": True, "layout": "main"}), encoding="utf-8"
     )
-    env = dict(os.environ, HERDR_APP_HOME=str(home), HC_SESSION="ime-ci",
+    env = dict(os.environ, HERDR_APP_HOME=str(home), HC_SESSION=f"ime-ci-{uuid.uuid4().hex[:8]}",
                HERDR_TELEMETRY="0", HERDR_IME_TRACE="1", HERDR_IME_TEST_FAULT=fault)
     if case == "focus-no-position":
         env["HERDR_IME_TEST_SKIP_POSITION"] = "1"
@@ -88,6 +89,9 @@ def main():
             if proc.poll() is None:
                 proc.terminate()
                 proc.wait(timeout=10)
+            stopped = subprocess.run([core, "server", "stop"], env=env,
+                                     capture_output=True, timeout=15)
+            (out / "core-stop.log").write_bytes(stopped.stdout + stopped.stderr)
 
 
 def run_trials(proc, app, env, out, user, owner, enum_callback, fault, focus_change, burst_control, ima):
