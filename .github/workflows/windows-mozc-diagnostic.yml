@@ -3,6 +3,8 @@ on:
   push:
     branches: [diagnose/windows-mozc-commit]
   workflow_dispatch:
+concurrency:
+  group: windows-mozc-${{ github.ref }}
 permissions:
   contents: read
 jobs:
@@ -12,26 +14,70 @@ jobs:
     env:
       LIBCLANG_PATH: 'C:\Program Files\LLVM\bin'
       CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      RUST_TOOLCHAIN: '1.95.0'
+      ZIG_VERSION: '0.16.0'
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: true
           persist-credentials: false
+      - name: Identify the exact build inputs
+        id: build-inputs
+        shell: bash
+        run: |
+          # The Git tree includes submodule revisions without fetching them.
+          # Workflow and replay-only edits can reuse the same diagnostic binary.
+          key=$(git ls-tree HEAD -- .gitmodules Cargo.toml Cargo.lock build.rs src vendor crates assets defaults distribution | git hash-object --stdin)
+          echo "binary-key=herdr-ime-exe-v1-windows-2022-rust-$RUST_TOOLCHAIN-zig-$ZIG_VERSION-$key" >> "$GITHUB_OUTPUT"
+      - name: Restore diagnostic executable
+        id: exe-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: target/debug/herdr-app.exe
+          key: ${{ steps.build-inputs.outputs.binary-key }}
+      - name: Fetch build submodules
+        if: steps.exe-cache.outputs.cache-hit != 'true'
+        run: git submodule update --init --recursive
       - uses: dtolnay/rust-toolchain@master
+        if: steps.exe-cache.outputs.cache-hit != 'true'
         with:
-          toolchain: '1.95.0'
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
       - uses: mlugg/setup-zig@v2
+        if: steps.exe-cache.outputs.cache-hit != 'true'
         with:
-          version: '0.16.0'
-      - uses: actions/cache@v4
+          version: ${{ env.ZIG_VERSION }}
+      - name: Restore Rust build cache
+        if: steps.exe-cache.outputs.cache-hit != 'true'
+        id: rust-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
-          key: windows-mozc-rust-1.95-zig-0.16-${{ hashFiles('Cargo.lock') }}
+            target/debug/build
+            target/debug/deps
+            target/debug/.fingerprint
+          key: herdr-ime-deps-v1-windows-2022-rust-${{ env.RUST_TOOLCHAIN }}-zig-${{ env.ZIG_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'vendor/**/Cargo.toml', 'crates/**/Cargo.toml') }}
       - name: Build diagnostic Herdr
+        if: steps.exe-cache.outputs.cache-hit != 'true'
         run: cargo build --locked --config 'profile.dev.package."*".opt-level=0'
+      - name: Save diagnostic executable before replay
+        if: steps.exe-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: target/debug/herdr-app.exe
+          key: ${{ steps.build-inputs.outputs.binary-key }}
+      - name: Save Rust build cache before replay
+        if: steps.exe-cache.outputs.cache-hit != 'true' && steps.rust-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/debug/build
+            target/debug/deps
+            target/debug/.fingerprint
+          key: ${{ steps.rust-cache.outputs.cache-primary-key }}
       - name: Install Mozc Readable
         shell: powershell
         env:
