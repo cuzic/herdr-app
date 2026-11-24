@@ -670,6 +670,12 @@ impl WindowsWindowInner {
     }
 
     pub(crate) fn update_ime_position(&self, handle: HWND, caret_position: POINT) {
+        if std::env::var_os("HERDR_IME_TEST_SKIP_POSITION").is_some() {
+            return;
+        }
+        if std::env::var_os("HERDR_IME_TRACE").is_some() {
+            eprintln!("[herdr-ime] position time={:?}", std::time::SystemTime::now());
+        }
         let Some(ctx) = ImeContext::get(handle) else {
             return;
         };

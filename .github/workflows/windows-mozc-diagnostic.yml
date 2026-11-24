@@ -111,6 +111,9 @@ jobs:
       - name: Replay with a pane focus change during conversion
         if: '!cancelled()'
         run: python scripts/windows-mozc-diagnostic.py focus-change
+      - name: Replay focus changes with candidate positioning disabled
+        if: '!cancelled()'
+        run: python scripts/windows-mozc-diagnostic.py focus-no-position
       - uses: actions/upload-artifact@v4
         if: always()
         with:
