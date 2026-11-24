@@ -33,8 +33,22 @@ def main():
     out = Path("ime-diagnostics").resolve()
     out.mkdir(exist_ok=True)
     app = Path("target/debug/herdr-app.exe").resolve()
-    env = dict(os.environ, HERDR_APP_HOME=str(out / "home"), HC_SESSION="ime-ci",
+    home = Path(os.environ["RUNNER_TEMP"]) / "herdr-ime-home"
+    home.mkdir(exist_ok=True)
+    (home / "shared.json").write_text(
+        json.dumps({"frame.welcomed": True, "layout": "main"}), encoding="utf-8"
+    )
+    env = dict(os.environ, HERDR_APP_HOME=str(home), HC_SESSION="ime-ci",
                HERDR_TELEMETRY="0", HERDR_IME_TRACE="1")
+    core_dir = Path(os.environ["LOCALAPPDATA"]) / "Programs/herdr-core"
+    core = next((core_dir / name for name in ("hc.exe", "herdr-core.exe")
+                 if (core_dir / name).is_file()), "hc.exe")
+    started = subprocess.run([core, "server", "start"], env=env,
+                             capture_output=True, timeout=30)
+    (out / "core-start.log").write_bytes(started.stdout + started.stderr)
+    if started.returncode:
+        print((started.stdout + started.stderr).decode(errors="replace"))
+        raise SystemExit("INVALID: herdr-core server did not start")
     user = ct.WinDLL("user32", use_last_error=True)
     user.GetForegroundWindow.restype = wt.HWND
     user.GetWindowThreadProcessId.argtypes = [wt.HWND, ct.POINTER(wt.DWORD)]
@@ -53,6 +67,12 @@ def main():
         proc = subprocess.Popen([app], env=env, stdout=stdout, stderr=stderr)
         try:
             run_trials(proc, app, env, out, user, owner, enum_callback)
+        except BaseException:
+            stderr.flush()
+            print((out / "herdr.stderr").read_bytes()[-9000:].decode(errors="replace"))
+            stdout.flush()
+            print((out / "herdr.stdout").read_bytes()[-9000:].decode(errors="replace"))
+            raise
         finally:
             if proc.poll() is None:
                 proc.terminate()
@@ -106,10 +126,20 @@ def run_trials(proc, app, env, out, user, owner, enum_callback):
             + ("+sys.stdin.readline()" if mid_enter else "")
             + ",encoding='utf-8')"
         )
-        request = json.dumps({"name": label, "argv": [sys.executable, "-c", code]})
-        opened = subprocess.run([app, "do", "tab.new", request], env=env,
-                                capture_output=True, timeout=20)
-        (out / f"{label}-tab.log").write_bytes(opened.stdout + opened.stderr)
+        request = json.dumps({
+            "name": label, "folder": str(out), "argv": [sys.executable, "-c", code]
+        })
+        for _ in range(20):
+            opened = subprocess.run([app, "do", "space.new", request], env=env,
+                                    capture_output=True, timeout=5)
+            if opened.returncode == 0:
+                break
+            time.sleep(.25)
+        response = opened.stdout + opened.stderr
+        (out / f"{label}-space.log").write_bytes(response)
+        print(label, response.decode(errors="replace"), flush=True)
+        if opened.returncode:
+            raise SystemExit("INVALID: could not create the scratch space")
         for _ in range(60):
             if ready.exists():
                 break
