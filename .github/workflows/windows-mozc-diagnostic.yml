@@ -1,7 +1,7 @@
 name: Windows Mozc commit diagnostic
 on:
   push:
-    branches: [diagnose/windows-mozc-commit]
+    branches: [diagnose/windows-ime-comparison]
   workflow_dispatch:
 concurrency:
   group: windows-mozc-${{ github.ref }}
@@ -94,39 +94,15 @@ jobs:
         run: |
           Invoke-WebRequest https://releases.herdr.dev/core/install.ps1 -OutFile "$env:RUNNER_TEMP/install-herdr-core.ps1"
           & "$env:RUNNER_TEMP/install-herdr-core.ps1"
-      - name: Replay conversion into a scratch terminal
-        run: python scripts/windows-mozc-diagnostic.py
-      - name: Force each suspected commit failure
-        if: success()
+      - name: Replay without changing focus
         run: |
-          $failed = $false
-          foreach ($fault in @('missing-result', 'copy-error', 'terminal-reject')) {
-            python scripts/windows-mozc-diagnostic.py $fault
-            if ($LASTEXITCODE -ne 0) { $failed = $true }
-          }
-          if ($failed) { exit 1 }
-      - name: Replay adjacent key batches without changing focus
-        if: '!cancelled()'
-        run: python scripts/windows-mozc-diagnostic.py burst-control
-      - name: Replay with a pane focus change during conversion
-        if: '!cancelled()'
-        run: python scripts/windows-mozc-diagnostic.py focus-change
-      - name: Replay focus changes with candidate positioning disabled
-        if: '!cancelled()'
-        run: python scripts/windows-mozc-diagnostic.py focus-no-position
-      - name: Replay the subsequent ima-douiu incident without changing focus
-        if: '!cancelled()'
-        run: python scripts/windows-mozc-diagnostic.py ima
-      - name: Replay focus changes with the foreground input drain disabled
-        if: '!cancelled()'
-        run: python scripts/windows-mozc-diagnostic.py focus-no-drain
-      - name: Replay focus changes while draining IME messages before keys
-        if: '!cancelled()'
-        run: python scripts/windows-mozc-diagnostic.py focus-prioritize-ime
+          python scripts/windows-mozc-diagnostic.py ima 2>&1 | Tee-Object -FilePath replay.log
+          exit $LASTEXITCODE
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: windows-mozc-diagnostics
           path: |
+            replay.log
             ime-diagnostics
             mozc-readable-msi/install.log

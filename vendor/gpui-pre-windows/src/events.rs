@@ -761,6 +761,7 @@ impl WindowsWindowInner {
 
     fn handle_ime_composition_inner(&self, ctx: HIMC, lparam: LPARAM) -> Option<isize> {
         let lparam = lparam.0 as u32;
+        crate::ime_compare::record("composition", format_args!("flags={lparam:#x}"));
         if lparam == 0 {
             // Japanese IME may send this message with lparam = 0, which indicates that
             // there is no composition string.
@@ -778,10 +779,12 @@ impl WindowsWindowInner {
             if lparam & GCS_RESULTSTR.0 > 0 && !drop_result {
                 let fail_copy = combined && fault.as_deref() == Some("copy-error");
                 let comp_result = parse_ime_composition_string(ctx, GCS_RESULTSTR, fail_copy)?;
-                self.with_input_handler(|input_handler| {
+                let delivered = self.with_input_handler(|input_handler| {
                     input_handler
                         .replace_text_in_range(None, &String::from_utf16_lossy(&comp_result));
-                })?;
+                });
+                crate::ime_compare::record("commit", format_args!("utf16={} handler={}", comp_result.len(), delivered.is_some()));
+                delivered?;
             }
             if lparam & GCS_COMPSTR.0 > 0 {
                 let comp_string = parse_ime_composition_string(ctx, GCS_COMPSTR, false)?;
@@ -1953,6 +1956,7 @@ fn parse_ime_composition_string(
 ) -> Option<Vec<u16>> {
     unsafe {
         let string_len = ImmGetCompositionStringW(ctx, comp_type, None, 0);
+        crate::ime_compare::record("imm-size", format_args!("kind={} bytes={string_len}", comp_type.0));
         if std::env::var_os("HERDR_IME_TRACE").is_some() {
             eprintln!("[herdr-ime] size kind={} bytes={string_len}", comp_type.0);
         }
@@ -1969,6 +1973,7 @@ fn parse_ime_composition_string(
                     string_len as _,
                 )
             };
+            crate::ime_compare::record("imm-copy", format_args!("kind={} bytes={copied}", comp_type.0));
             if std::env::var_os("HERDR_IME_TRACE").is_some() {
                 eprintln!("[herdr-ime] read kind={} bytes={copied}", comp_type.0);
             }

@@ -2368,12 +2368,14 @@ impl EntityInputHandler for TerminalView {
             eprintln!("[herdr-ime] injected terminal-reject");
         }
         let find_focused = reject_commit || self.find_field_focused(window, cx);
-        if std::env::var_os("HERDR_IME_TRACE").is_some() {
-            eprintln!(
-                "[herdr-ime] terminal commit bytes={} find_focused={find_focused} attached={}",
-                text.len(),
-                self.grid.borrow().channel.is_some()
-            );
+        if std::env::var_os("GPUI_IME_COMPARE").is_some() {
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos();
+            eprintln!("[ime-compare] ns={timestamp} terminal bytes={} blocked={} attached={}", text.len(),
+                find_focused,
+                self.grid.borrow().channel.is_some());
         }
         if !find_focused {
             self.send(text.as_bytes());

@@ -47,7 +47,7 @@ def main():
         json.dumps({"frame.welcomed": True, "layout": "main"}), encoding="utf-8"
     )
     env = dict(os.environ, HERDR_APP_HOME=str(home), HC_SESSION=f"ime-ci-{uuid.uuid4().hex[:8]}",
-               HERDR_TELEMETRY="0", HERDR_IME_TRACE="1", HERDR_IME_TEST_FAULT=fault)
+               HERDR_TELEMETRY="0", GPUI_IME_COMPARE="1", HERDR_IME_TEST_FAULT=fault)
     if case == "focus-no-position":
         env["HERDR_IME_TEST_SKIP_POSITION"] = "1"
     if case == "focus-no-drain":
@@ -266,7 +266,7 @@ def run_trials(proc, app, env, out, user, owner, enum_callback, fault, focus_cha
                 print(f"focus back {label} unix_ns={time.time_ns()}", flush=True)
 
         time.sleep(.5)
-        print(f"trial {label} tick_ms={ct.windll.kernel32.GetTickCount() & 0xffffffff}", flush=True)
+        print(f"trial {label} ns={time.time_ns()} tick_ms={ct.windll.kernel32.GetTickCount() & 0xffffffff}", flush=True)
         replay(mid_enter, gap_ms, focus_roundtrip, burst_control and not mid_enter)
         for _ in range(40):
             if capture.exists() and capture.stat().st_size:
