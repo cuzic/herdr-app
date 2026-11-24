@@ -1273,7 +1273,28 @@ impl WindowsPlatformInner {
                     }
                     if std::env::var_os("HERDR_IME_TEST_SKIP_INPUT_DRAIN").is_none() {
                         let trace_ime = std::env::var_os("HERDR_IME_TRACE").is_some();
-                        while peek_msg(&mut msg, PM_QS_INPUT) {
+                        let prioritize_ime = std::env::var_os("HERDR_IME_TEST_PRIORITIZE_IME").is_some();
+                        loop {
+                            if prioritize_ime {
+                                // Keep a reported commit ahead of subsequent keyboard input.
+                                while unsafe {
+                                    PeekMessageW(
+                                        &mut msg,
+                                        None,
+                                        WM_IME_STARTCOMPOSITION,
+                                        WM_IME_COMPOSITION,
+                                        PM_REMOVE,
+                                    ).as_bool()
+                                } {
+                                    if trace_ime {
+                                        eprintln!("[herdr-ime] prioritized message={:#x}", msg.message);
+                                    }
+                                    process_message(&msg);
+                                }
+                            }
+                            if !peek_msg(&mut msg, PM_QS_INPUT) {
+                                break;
+                            }
                             if trace_ime && matches!(msg.message, WM_KEYDOWN | WM_SYSKEYDOWN | WM_IME_COMPOSITION) {
                                 eprintln!(
                                     "[herdr-ime] foreground-drain time={:?} msg={:#x} message_ms={}",

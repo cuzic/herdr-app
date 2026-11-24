@@ -120,6 +120,9 @@ jobs:
       - name: Replay focus changes with the foreground input drain disabled
         if: '!cancelled()'
         run: python scripts/windows-mozc-diagnostic.py focus-no-drain
+      - name: Replay focus changes while draining IME messages before keys
+        if: '!cancelled()'
+        run: python scripts/windows-mozc-diagnostic.py focus-prioritize-ime
       - uses: actions/upload-artifact@v4
         if: always()
         with:
