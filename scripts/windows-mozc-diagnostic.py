@@ -32,9 +32,11 @@ def main():
     if os.environ.get("GITHUB_ACTIONS") != "true" or sys.platform != "win32":
         raise SystemExit("Run only on the disposable Windows Actions runner")
     case = sys.argv[1] if len(sys.argv) > 1 else ""
+    timing_probe = case.endswith("-probe")
+    scenario = case.removesuffix("-probe") if timing_probe else case
     focus_change = case in ("focus-change", "focus-no-position", "focus-no-drain", "focus-prioritize-ime")
     burst_control = case == "burst-control"
-    ima = case in ("ima", "ima-direct", "ima-no-drain", "ima-prioritize")
+    ima = scenario in ("ima", "ima-direct", "ima-no-drain", "ima-prioritize")
     fault = "" if focus_change or burst_control or ima else case
     if fault not in ("", "missing-result", "copy-error", "terminal-reject"):
         raise SystemExit(f"Unknown diagnostic fault: {fault}")
@@ -50,12 +52,14 @@ def main():
                HERDR_TELEMETRY="0", GPUI_IME_COMPARE="1", HERDR_IME_TEST_FAULT=fault)
     if case == "focus-no-position":
         env["HERDR_IME_TEST_SKIP_POSITION"] = "1"
-    if case == "ima-direct":
+    if scenario == "ima-direct":
         env["GPUI_IME_DIRECT_KEY"] = "1"
-    if case in ("focus-no-drain", "ima-no-drain"):
+    if scenario in ("focus-no-drain", "ima-no-drain"):
         env["HERDR_IME_TEST_SKIP_INPUT_DRAIN"] = "1"
-    if case in ("focus-prioritize-ime", "ima-prioritize"):
+    if scenario in ("focus-prioritize-ime", "ima-prioritize"):
         env["HERDR_IME_TEST_PRIORITIZE_IME"] = "1"
+    if timing_probe:
+        env["GPUI_IME_TIMING_PROBE"] = "1"
     core_dir = Path(os.environ["LOCALAPPDATA"]) / "Programs/herdr-core"
     core = next((core_dir / name for name in ("hc.exe", "herdr-core.exe")
                  if (core_dir / name).is_file()), "hc.exe")
@@ -72,6 +76,7 @@ def main():
     user.ShowWindow.argtypes = [wt.HWND, ct.c_int]
     enum_callback = ct.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)
     user.EnumWindows.argtypes = [enum_callback, wt.LPARAM]
+    user.PostMessageW.argtypes = [wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM]
     user.SendInput.argtypes = [wt.UINT, ct.POINTER(Input), ct.c_int]
 
     def owner(hwnd):
@@ -174,6 +179,13 @@ def run_trials(proc, app, env, out, user, owner, enum_callback, fault, focus_cha
                     offset = transition_at
                 offset += gap_ms - observed_gap
             time.sleep(max(0, start + offset / 1000 - time.perf_counter()))
+            if offset == transition_at + gap_ms - observed_gap and "GPUI_IME_TIMING_PROBE" in env:
+                handle = user.GetForegroundWindow()
+                if owner(handle) != proc.pid:
+                    raise SystemExit("INVALID: timing probe target is unfocused")
+                if not user.PostMessageW(handle, 0, 0x494D4550, 0):
+                    raise ct.WinError(ct.get_last_error())
+                time.sleep(.012)
             if isinstance(events, str):
                 keys = [ord(c) for c in events]
                 send([(vk, up) for up in (False, True) for vk in keys])
