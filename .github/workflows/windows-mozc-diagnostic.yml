@@ -28,7 +28,7 @@ jobs:
           # The Git tree includes submodule revisions without fetching them.
           # Workflow and replay-only edits can reuse the same diagnostic binary.
           key=$(git ls-tree HEAD -- .gitmodules Cargo.toml Cargo.lock build.rs src vendor crates assets defaults distribution | git hash-object --stdin)
-          echo "binary-key=herdr-ime-exe-v2-windows-2022-rust-$RUST_TOOLCHAIN-zig-$ZIG_VERSION-$key" >> "$GITHUB_OUTPUT"
+          echo "binary-key=herdr-ime-exe-v3-windows-2022-rust-$RUST_TOOLCHAIN-zig-$ZIG_VERSION-$key" >> "$GITHUB_OUTPUT"
       - name: Restore diagnostic executable
         id: exe-cache
         uses: actions/cache/restore@v4
@@ -60,7 +60,7 @@ jobs:
           key: herdr-ime-deps-v1-windows-2022-rust-${{ env.RUST_TOOLCHAIN }}-zig-${{ env.ZIG_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'vendor/**/Cargo.toml', 'crates/**/Cargo.toml') }}
       - name: Build diagnostic Herdr
         if: steps.exe-cache.outputs.cache-hit != 'true'
-        run: cargo rustc --locked --bin herdr-app --config 'profile.dev.package."*".opt-level=0' -- -C link-arg=/STACK:16777216
+        run: cargo rustc --locked --bin herdr-app --config 'profile.dev.package."*".opt-level=0' --config 'profile.dev.package.gpui-pre-windows.debug-assertions=false' -- -C link-arg=/STACK:16777216
       - name: Save diagnostic executable before replay
         if: steps.exe-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
