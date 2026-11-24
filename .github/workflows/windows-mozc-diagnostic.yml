@@ -105,6 +105,9 @@ jobs:
             if ($LASTEXITCODE -ne 0) { $failed = $true }
           }
           if ($failed) { exit 1 }
+      - name: Replay adjacent key batches without changing focus
+        if: '!cancelled()'
+        run: python scripts/windows-mozc-diagnostic.py burst-control
       - name: Replay with a pane focus change during conversion
         if: '!cancelled()'
         run: python scripts/windows-mozc-diagnostic.py focus-change

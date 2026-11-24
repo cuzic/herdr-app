@@ -32,7 +32,8 @@ def main():
         raise SystemExit("Run only on the disposable Windows Actions runner")
     case = sys.argv[1] if len(sys.argv) > 1 else ""
     focus_change = case == "focus-change"
-    fault = "" if focus_change else case
+    burst_control = case == "burst-control"
+    fault = "" if focus_change or burst_control else case
     if fault not in ("", "missing-result", "copy-error", "terminal-reject"):
         raise SystemExit(f"Unknown diagnostic fault: {fault}")
     out = (Path("ime-diagnostics") / (case or "baseline")).resolve()
@@ -71,7 +72,7 @@ def main():
     with (out / "herdr.stdout").open("wb") as stdout, (out / "herdr.stderr").open("wb") as stderr:
         proc = subprocess.Popen([app], env=env, stdout=stdout, stderr=stderr)
         try:
-            run_trials(proc, app, env, out, user, owner, enum_callback, fault, focus_change)
+            run_trials(proc, app, env, out, user, owner, enum_callback, fault, focus_change, burst_control)
         except BaseException:
             stderr.flush()
             print((out / "herdr.stderr").read_bytes()[-9000:].decode(errors="replace"))
@@ -84,7 +85,7 @@ def main():
                 proc.wait(timeout=10)
 
 
-def run_trials(proc, app, env, out, user, owner, enum_callback, fault, focus_change):
+def run_trials(proc, app, env, out, user, owner, enum_callback, fault, focus_change, burst_control):
     windows = []
 
     @enum_callback
@@ -135,12 +136,14 @@ def run_trials(proc, app, env, out, user, owner, enum_callback, fault, focus_cha
             raise SystemExit(f"INVALID: {name}: {result.stderr.decode(errors='replace')}")
         return json.loads(result.stdout)
 
-    def replay(mid_enter, gap_ms, focus_roundtrip=None):
+    def replay(mid_enter, gap_ms, focus_roundtrip=None, burst=False):
         tap(0xF2)
         time.sleep(.15)
         start = time.perf_counter()
         for offset, events in observed:
             if offset >= 1352:
+                if burst and isinstance(events, str):
+                    offset = 1352
                 offset += gap_ms - 83
             time.sleep(max(0, start + offset / 1000 - time.perf_counter()))
             if isinstance(events, str):
@@ -164,6 +167,11 @@ def run_trials(proc, app, env, out, user, owner, enum_callback, fault, focus_cha
     if focus_change:
         trials = [("control", True, 83)] + [
             (f"focus-{gap}-{attempt}", False, gap)
+            for gap in (10, 83, 170, 350) for attempt in range(3)
+        ]
+    if burst_control:
+        trials = [("control", True, 83)] + [
+            (f"burst-{gap}-{attempt}", False, gap)
             for gap in (10, 83, 170, 350) for attempt in range(3)
         ]
     for label, mid_enter, gap_ms in trials:
@@ -228,7 +236,7 @@ def run_trials(proc, app, env, out, user, owner, enum_callback, fault, focus_cha
 
         time.sleep(.5)
         print(f"trial {label} tick_ms={ct.windll.kernel32.GetTickCount() & 0xffffffff}", flush=True)
-        replay(mid_enter, gap_ms, focus_roundtrip)
+        replay(mid_enter, gap_ms, focus_roundtrip, burst_control and not mid_enter)
         for _ in range(40):
             if capture.exists() and capture.stat().st_size:
                 break
