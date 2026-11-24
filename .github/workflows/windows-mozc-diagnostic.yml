@@ -114,6 +114,9 @@ jobs:
       - name: Replay focus changes with candidate positioning disabled
         if: '!cancelled()'
         run: python scripts/windows-mozc-diagnostic.py focus-no-position
+      - name: Replay the subsequent ima-douiu incident without changing focus
+        if: '!cancelled()'
+        run: python scripts/windows-mozc-diagnostic.py ima
       - uses: actions/upload-artifact@v4
         if: always()
         with:

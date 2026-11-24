@@ -33,7 +33,8 @@ def main():
     case = sys.argv[1] if len(sys.argv) > 1 else ""
     focus_change = case in ("focus-change", "focus-no-position")
     burst_control = case == "burst-control"
-    fault = "" if focus_change or burst_control else case
+    ima = case == "ima"
+    fault = "" if focus_change or burst_control or ima else case
     if fault not in ("", "missing-result", "copy-error", "terminal-reject"):
         raise SystemExit(f"Unknown diagnostic fault: {fault}")
     out = (Path("ime-diagnostics") / (case or "baseline")).resolve()
@@ -74,7 +75,7 @@ def main():
     with (out / "herdr.stdout").open("wb") as stdout, (out / "herdr.stderr").open("wb") as stderr:
         proc = subprocess.Popen([app], env=env, stdout=stdout, stderr=stderr)
         try:
-            run_trials(proc, app, env, out, user, owner, enum_callback, fault, focus_change, burst_control)
+            run_trials(proc, app, env, out, user, owner, enum_callback, fault, focus_change, burst_control, ima)
         except BaseException:
             stderr.flush()
             print((out / "herdr.stderr").read_bytes()[-9000:].decode(errors="replace"))
@@ -87,7 +88,7 @@ def main():
                 proc.wait(timeout=10)
 
 
-def run_trials(proc, app, env, out, user, owner, enum_callback, fault, focus_change, burst_control):
+def run_trials(proc, app, env, out, user, owner, enum_callback, fault, focus_change, burst_control, ima):
     windows = []
 
     @enum_callback
@@ -131,6 +132,21 @@ def run_trials(proc, app, env, out, user, owner, enum_callback, fault, focus_cha
         (1981, 0x0D), (2022, -0x0D),
     ]
 
+    transition_at = 1352
+    observed_gap = 83
+    suffix = "もっと"
+    if ima:
+        # dragonflyg4, 2026-11-24 10:39:15.409 UTC. The Space/Enter
+        # release gaps are fixture timings, as only their presses were logged.
+        observed = [
+            (0, "I"), (249, "MA"), (498, 0x20), (560, -0x20),
+            (743, "DO"), (988, "U"), (1095, "I"), (1191, "U"),
+            (1490, 0x0D), (1550, -0x0D),
+        ]
+        transition_at = 743
+        observed_gap = 183
+        suffix = "どういう"
+
     def command(name, **args):
         result = subprocess.run([app, "do", name, json.dumps(args)], env=env,
                                 capture_output=True, timeout=5)
@@ -143,10 +159,10 @@ def run_trials(proc, app, env, out, user, owner, enum_callback, fault, focus_cha
         time.sleep(.15)
         start = time.perf_counter()
         for offset, events in observed:
-            if offset >= 1352:
+            if offset >= transition_at:
                 if burst and isinstance(events, str):
-                    offset = 1352
-                offset += gap_ms - 83
+                    offset = transition_at
+                offset += gap_ms - observed_gap
             time.sleep(max(0, start + offset / 1000 - time.perf_counter()))
             if isinstance(events, str):
                 keys = [ord(c) for c in events]
@@ -175,6 +191,11 @@ def run_trials(proc, app, env, out, user, owner, enum_callback, fault, focus_cha
         trials = [("control", True, 83)] + [
             (f"burst-{gap}-{attempt}", False, gap)
             for gap in (10, 83, 170, 350) for attempt in range(3)
+        ]
+    if ima:
+        trials = [("control", True, observed_gap)] + [
+            (f"ima-{gap}-{attempt}", False, gap)
+            for gap in (10, observed_gap, 350) for attempt in range(4)
         ]
     for label, mid_enter, gap_ms in trials:
         capture = out / f"{label}.txt"
@@ -263,10 +284,10 @@ def run_trials(proc, app, env, out, user, owner, enum_callback, fault, focus_cha
         return
 
     control = "".join(results[0][1].splitlines())
-    if not control.endswith("もっと") or control == "もっと":
+    if not control.endswith(suffix) or control == suffix:
         raise SystemExit("INVALID: explicit commit did not establish the Japanese control")
     implicit = [(label, "".join(value.splitlines())) for label, value in results[1:]]
-    missing = [label for label, value in implicit if value == "もっと"]
+    missing = [label for label, value in implicit if value == suffix]
     if missing:
         raise SystemExit(f"REPRODUCED: only the second composition reached {missing}")
     different = [label for label, value in implicit if value != control]
