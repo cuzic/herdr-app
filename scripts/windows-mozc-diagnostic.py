@@ -123,7 +123,6 @@ def run_trials(proc, app, env, out, user, owner, enum_callback):
             "sys.stdin.reconfigure(encoding='utf-8');"
             f"pathlib.Path({str(ready)!r}).touch();"
             f"pathlib.Path({str(capture)!r}).write_text(sys.stdin.readline()"
-            + ("+sys.stdin.readline()" if mid_enter else "")
             + ",encoding='utf-8')"
         )
         request = json.dumps({
@@ -156,9 +155,11 @@ def run_trials(proc, app, env, out, user, owner, enum_callback):
         time.sleep(.17)
         if mid_enter:
             key(0x0D)
-        for char in "motto":
+        for char in "moltuto":
             key(ord(char.upper()))
-        key(0x0D)
+        key(0x0D)  # Commit the current IME composition.
+        time.sleep(.15)
+        key(0x0D)  # Submit the console line to the capture process.
         for _ in range(40):
             if capture.exists() and capture.stat().st_size:
                 break
