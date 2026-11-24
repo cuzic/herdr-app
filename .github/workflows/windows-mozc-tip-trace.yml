@@ -11,7 +11,7 @@ permissions:
   actions: read
 jobs:
   trace:
-    runs-on: windows-2025
+    runs-on: windows-2022
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -25,6 +25,10 @@ jobs:
           persist-credentials: false
       - name: Add trace points before and after the TSF commit
         run: python scripts/instrument-mozc-commit.py mozc
+      - uses: actions/cache@v4
+        with:
+          path: mozc/src/third_party_cache
+          key: mozc-tip-dependencies-windows-2022-${{ hashFiles('mozc/src/build_tools/update_deps.py') }}
       - name: Prepare Mozc dependencies
         working-directory: mozc/src
         run: python build_tools/update_deps.py
