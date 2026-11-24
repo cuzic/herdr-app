@@ -130,6 +130,8 @@ def run_trials(proc, app, env, out, user, owner, enum_callback):
             "name": label, "folder": str(out), "argv": [sys.executable, "-c", code]
         })
         for _ in range(20):
+            if proc.poll() is not None:
+                raise SystemExit(f"INVALID: Herdr exited with {proc.returncode}")
             opened = subprocess.run([app, "do", "space.new", request], env=env,
                                     capture_output=True, timeout=5)
             if opened.returncode == 0:
