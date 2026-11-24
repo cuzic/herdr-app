@@ -207,7 +207,7 @@ def run_trials(proc, app, env, out, user, owner, enum_callback, fault, focus_cha
                 "import msvcrt,pathlib;"
                 f"pathlib.Path({str(other_ready)!r}).touch();"
                 f"f=pathlib.Path({str(other_capture)!r}).open('w',encoding='utf-8');"
-                "exec('while True:\n f.write(msvcrt.getwch());f.flush()')"
+                "\nwhile True:\n    f.write(msvcrt.getwch())\n    f.flush()\n"
             )
             other = command("pane.split", direction="right", argv=[sys.executable, "-c", reader])
             other_terminal = other["terminal"]
