@@ -34,7 +34,7 @@ def main():
     if fault not in ("", "missing-result", "copy-error", "terminal-reject"):
         raise SystemExit(f"Unknown diagnostic fault: {fault}")
     out = (Path("ime-diagnostics") / (fault or "baseline")).resolve()
-    out.mkdir(exist_ok=True)
+    out.mkdir(parents=True, exist_ok=True)
     app = Path("target/debug/herdr-app.exe").resolve()
     home = Path(os.environ["RUNNER_TEMP"]) / ("herdr-ime-" + (fault or "baseline"))
     home.mkdir(exist_ok=True)
