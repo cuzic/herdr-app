@@ -1,0 +1,67 @@
+name: Windows Mozc TIP boundary trace
+on:
+  push:
+    branches: [diagnose/windows-mozc-commit]
+    paths:
+      - .github/workflows/windows-mozc-tip-trace.yml
+      - scripts/instrument-mozc-commit.py
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  trace:
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: cuzic/mozc-readable
+          ref: v3.35.6354-readable.1
+          path: mozc
+          persist-credentials: false
+      - name: Add trace points before and after the TSF commit
+        run: python scripts/instrument-mozc-commit.py mozc
+      - name: Prepare Mozc dependencies
+        working-directory: mozc/src
+        run: python build_tools/update_deps.py
+      - name: Build the x64 TIP
+        working-directory: mozc/src
+        env:
+          ANDROID_NDK_HOME: ''
+        run: bazelisk build '//win32/tip:mozc_tip64' --config release_build
+      - name: Install Mozc Readable
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/install-mozc-for-ime-ci.ps1 -Tag v3.35.6354-readable.1
+      - name: Install the instrumented TIP on the runner
+        shell: powershell
+        run: |
+          Stop-Process -Name ctfmon -ErrorAction SilentlyContinue
+          $tip = Get-ChildItem mozc/src/bazel-bin/win32/tip -Filter mozc_tip64.dll -Recurse | Select-Object -First 1
+          if (!$tip) { throw 'Built TIP DLL missing' }
+          $dest = Join-Path ${env:ProgramFiles(x86)} 'Mozc Readable\mozc_tip64.dll'
+          Copy-Item -LiteralPath $tip.FullName -Destination $dest -Force
+          Start-Process ctfmon.exe
+      - name: Restore the known-good Herdr diagnostic executable
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download 45376618537 -n herdr-ime-diagnostic-exe -D target/debug
+      - name: Install herdr-core
+        run: |
+          Invoke-WebRequest https://releases.herdr.dev/core/install.ps1 -OutFile "$env:RUNNER_TEMP/install-herdr-core.ps1"
+          & "$env:RUNNER_TEMP/install-herdr-core.ps1"
+      - name: Replay while recording both sides of the commit
+        run: |
+          New-Item -ItemType Directory -Path ime-diagnostics -Force | Out-Null
+          $env:HERDR_IME_MOZC_TRACE = Join-Path (Resolve-Path ime-diagnostics) 'mozc-tip.log'
+          python scripts/windows-mozc-diagnostic.py focus-change
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mozc-tip-boundary-diagnostics
+          path: ime-diagnostics
