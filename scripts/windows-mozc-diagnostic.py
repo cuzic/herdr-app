@@ -102,19 +102,51 @@ def run_trials(proc, app, env, out, user, owner, enum_callback):
     else:
         raise SystemExit("INVALID: runner cannot foreground the Herdr window")
 
-    def key(vk):
+    def send(keys):
         if owner(user.GetForegroundWindow()) != proc.pid:
             raise SystemExit("INVALID: Herdr lost foreground")
-        events = (Input * 2)()
-        for i, flags in enumerate((0, 2)):
-            events[i].type = 1
-            events[i].data.keyboard = Keyboard(vk, 0, flags, 0, 0)
-        if user.SendInput(2, events, ct.sizeof(Input)) != 2:
+        events = (Input * len(keys))()
+        for event, (vk, up) in zip(events, keys):
+            event.type = 1
+            event.data.keyboard = Keyboard(vk, 0, 2 if up else 0, 0, 0)
+        if user.SendInput(len(events), events, ct.sizeof(Input)) != len(events):
             raise ct.WinError(ct.get_last_error())
-        time.sleep(.045)
+
+    def tap(vk):
+        send([(vk, False), (vk, True)])
+
+    # Journal timings relative to the first output, in milliseconds.
+    observed = [
+        (0, "HI"), (114, "TO"), (223, "NO"), (556, "KA"),
+        (785, "ZU"), (955, "WO"), (1181, 0x20), (1269, -0x20),
+        (1352, "MO"), (1575, "LTU"), (1743, "TO"),
+        (1981, 0x0D), (2022, -0x0D),
+    ]
+
+    def replay(mid_enter, gap_ms):
+        tap(0xF2)
+        time.sleep(.15)
+        start = time.perf_counter()
+        for offset, events in observed:
+            if offset >= 1352:
+                offset += gap_ms - 83
+            time.sleep(max(0, start + offset / 1000 - time.perf_counter()))
+            if isinstance(events, str):
+                keys = [ord(c) for c in events]
+                send([(vk, up) for up in (False, True) for vk in keys])
+            else:
+                send([(abs(events), events < 0)])
+                if events == -0x20 and mid_enter:
+                    tap(0x0D)
+        time.sleep(.15)
+        tap(0x0D)
 
     results = []
-    for label, mid_enter in (("control", True), ("implicit", False)):
+    trials = [("control", True, 83)] + [
+        (f"implicit-{gap}-{attempt}", False, gap)
+        for gap in (10, 83, 170) for attempt in range(3)
+    ]
+    for label, mid_enter, gap_ms in trials:
         capture = out / f"{label}.txt"
         ready = out / f"{label}.ready"
         # The pane records text after the console line discipline receives it.
@@ -148,18 +180,8 @@ def run_trials(proc, app, env, out, user, owner, enum_callback):
         else:
             raise SystemExit("INVALID: scratch terminal did not start")
         time.sleep(.5)
-        key(0xF2)
-        for char in "hitonokazuwo":
-            key(ord(char.upper()))
-        key(0x20)
-        time.sleep(.17)
-        if mid_enter:
-            key(0x0D)
-        for char in "moltuto":
-            key(ord(char.upper()))
-        key(0x0D)  # Commit the current IME composition.
-        time.sleep(.15)
-        key(0x0D)  # Submit the console line to the capture process.
+        print(f"trial {label} tick_ms={ct.windll.kernel32.GetTickCount() & 0xffffffff}", flush=True)
+        replay(mid_enter, gap_ms)
         for _ in range(40):
             if capture.exists() and capture.stat().st_size:
                 break
@@ -168,14 +190,17 @@ def run_trials(proc, app, env, out, user, owner, enum_callback):
         results.append((label, value))
         print(label, ascii(value), flush=True)
 
-    control, implicit = ("".join(value.splitlines()) for _, value in results)
+    control = "".join(results[0][1].splitlines())
     if not control.endswith("もっと") or control == "もっと":
         raise SystemExit("INVALID: explicit commit did not establish the Japanese control")
-    if implicit == "もっと":
-        raise SystemExit("REPRODUCED: only the second composition reached the pane")
-    if implicit != control:
-        raise SystemExit("MISMATCH: inspect captured text and IME trace")
-    print("PASS: explicit and implicit commits agree in this trial")
+    implicit = [(label, "".join(value.splitlines())) for label, value in results[1:]]
+    missing = [label for label, value in implicit if value == "もっと"]
+    if missing:
+        raise SystemExit(f"REPRODUCED: only the second composition reached {missing}")
+    different = [label for label, value in implicit if value != control]
+    if different:
+        raise SystemExit(f"MISMATCH: inspect captured text and IME trace for {different}")
+    print(f"PASS: explicit and implicit commits agree in {len(implicit)} trials")
 
 
 if __name__ == "__main__":
