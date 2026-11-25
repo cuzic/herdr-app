@@ -600,6 +600,14 @@ impl Platform for WindowsPlatform {
         let mut msg = MSG::default();
         unsafe {
             while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+                if msg.message == WM_NULL
+                    && msg.wParam.0 == 0x494d4550
+                    && std::env::var_os("GPUI_IME_TIMING_PROBE").is_some()
+                {
+                    self.inner.run_foreground_task(true);
+                    continue;
+                }
+                crate::ime_compare::dispatch("main", &msg);
                 if translate_accelerator(&msg).is_none() {
                     _ = TranslateMessage(&msg);
                     DispatchMessageW(&msg);
@@ -1202,7 +1210,7 @@ impl WindowsPlatformInner {
                 self.close_one_window(HWND(lparam.0 as _));
                 Some(0)
             }
-            WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD => self.run_foreground_task(),
+            WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD => self.run_foreground_task(false),
             WM_GPUI_DOCK_MENU_ACTION => self.handle_dock_action_event(lparam.0 as _),
             WM_GPUI_KEYBOARD_LAYOUT_CHANGED => self.handle_keyboard_layout_change(),
             WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(lparam),
@@ -1245,10 +1253,14 @@ impl WindowsPlatformInner {
     }
 
     #[inline]
-    fn run_foreground_task(&self) -> Option<isize> {
+    fn run_foreground_task(&self, timing_probe: bool) -> Option<isize> {
         const MAIN_TASK_TIMEOUT: u128 = 10;
 
         let start = std::time::Instant::now();
+        if timing_probe {
+            crate::ime_compare::record("probe", format_args!("delay_ms=64"));
+            std::thread::sleep(std::time::Duration::from_millis(64));
+        }
         'tasks: loop {
             'timeout_loop: loop {
                 if start.elapsed().as_millis() >= MAIN_TASK_TIMEOUT {
@@ -1258,6 +1270,7 @@ impl WindowsPlatformInner {
                     // if we don't we might not for example process window quit events
                     let mut msg = MSG::default();
                     let process_message = |msg: &_| {
+                        crate::ime_compare::dispatch("foreground", msg);
                         if translate_accelerator(msg).is_none() {
                             _ = unsafe { TranslateMessage(msg) };
                             unsafe { DispatchMessageW(msg) };
@@ -1275,6 +1288,14 @@ impl WindowsPlatformInner {
                     // or the commit reads back empty (see foreground_input.rs).
                     use crate::foreground_input::{ForegroundMessageKind, drain_foreground_input};
                     let mut quit_pending = false;
+                    // Verification only: the upstream order without the fix.
+                    if std::env::var_os("HERDR_IME_TEST_UPSTREAM_DRAIN").is_some() {
+                        crate::ime_compare::record("drain", format_args!("order=upstream"));
+                        while peek_msg(&mut msg, PM_QS_INPUT) {
+                            process_message(&msg);
+                        }
+                    } else {
+                    crate::ime_compare::record("drain", format_args!("order=ime-first"));
                     drain_foreground_input(
                         |kind| {
                             if quit_pending {
@@ -1304,6 +1325,7 @@ impl WindowsPlatformInner {
                         },
                         |message| process_message(&message),
                     );
+                    }
                     if quit_pending {
                         return Some(0);
                     }

@@ -12,6 +12,7 @@ mod dispatcher;
 mod display;
 mod events;
 mod foreground_input;
+mod ime_compare;
 mod keyboard;
 mod platform;
 mod system_notifications;
