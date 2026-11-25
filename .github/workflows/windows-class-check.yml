@@ -1,0 +1,70 @@
+name: Windows window class names (diagnostic)
+on:
+  push:
+    branches: [diagnose/windows-class-check]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { label: before, ref: 'origin/master' }
+          - { label: after, ref: 'HEAD~1' }
+    timeout-minutes: 60
+    env:
+      LIBCLANG_PATH: 'C:\Program Files\LLVM\bin'
+      RUST_MIN_STACK: '16777216'
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      RUST_TOOLCHAIN: '1.95.0'
+      ZIG_VERSION: '0.16.0'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Keep the check script, then build the ${{ matrix.label }} source
+        shell: bash
+        run: |
+          cp scripts/windows-class-check.ps1 "$RUNNER_TEMP/"
+          git remote add upstream https://github.com/herdrdev/herdr-app.git
+          git fetch -q upstream master
+          ref='${{ matrix.ref }}'; [ "$ref" = origin/master ] && ref=upstream/master
+          git checkout -q "$ref"
+          git log --oneline -1
+          git submodule update --init --recursive
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/debug/build
+            target/debug/deps
+            target/debug/.fingerprint
+          key: herdr-class-deps-v1-windows-2022-${{ matrix.label }}-${{ hashFiles('Cargo.lock') }}
+      - name: Build Herdr
+        run: cargo rustc --locked --bin herdr-app --config 'profile.dev.package."*".opt-level=0' -- -C link-arg=/STACK:16777216
+      - name: Install herdr-core
+        run: |
+          Invoke-WebRequest https://releases.herdr.dev/core/install.ps1 -OutFile "$env:RUNNER_TEMP/install-herdr-core.ps1"
+          & "$env:RUNNER_TEMP/install-herdr-core.ps1"
+      - name: Read the window class names
+        shell: powershell
+        run: |
+          powershell -STA -NoProfile -File "$env:RUNNER_TEMP/windows-class-check.ps1" -App "$PWD/target/debug/herdr-app.exe" -Label '${{ matrix.label }}' | Tee-Object -FilePath class-names.txt
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: class-names-${{ matrix.label }}
+          path: class-names.txt
