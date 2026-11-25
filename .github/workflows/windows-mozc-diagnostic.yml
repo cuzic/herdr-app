@@ -4,12 +4,16 @@ on:
     branches: [diagnose/windows-ime-fix-verify]
   workflow_dispatch:
 concurrency:
-  group: windows-mozc-${{ github.ref }}
+  group: windows-ime-fix-verify-${{ github.ref }}
 permissions:
   contents: read
 jobs:
   diagnose:
     runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        ime: [mozc, msime]
     timeout-minutes: 45
     env:
       LIBCLANG_PATH: 'C:\Program Files\LLVM\bin'
@@ -96,10 +100,15 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Install Mozc Readable
+        if: matrix.ime == 'mozc'
         shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
         run: ./scripts/install-mozc-for-ime-ci.ps1 -Tag v3.35.6354-readable.1
+      - name: Use Microsoft IME
+        if: matrix.ime == 'msime'
+        shell: powershell
+        run: ./scripts/install-msime-for-ime-ci.ps1
       - name: Install herdr-core
         run: |
           Invoke-WebRequest https://releases.herdr.dev/core/install.ps1 -OutFile "$env:RUNNER_TEMP/install-herdr-core.ps1"
@@ -119,9 +128,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: windows-ime-fix-verify
+          name: windows-ime-fix-verify-${{ matrix.ime }}
           path: |
-            "*-replay.log"
+            *-replay.log
             ab-summary.txt
             ime-diagnostics
             mozc-readable-msi/install.log
