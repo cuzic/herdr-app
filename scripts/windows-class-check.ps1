@@ -36,15 +36,19 @@ try {
   "$Label uia: Name=`"$($c.Name)`" ClassName=`"$($c.ClassName)`" FrameworkId=`"$($c.FrameworkId)`""
   # Message-only windows are not in the UIA tree; list those owned by Herdr.
   $h = [IntPtr]::Zero
+  $found = 0
   while ($true) {
-    $h = [Win]::FindWindowExW([Win]::HWND_MESSAGE, $h, $null, $null)
+    # PowerShell turns `$null into "" for a string argument; NullString passes a real null.
+    $h = [Win]::FindWindowExW([Win]::HWND_MESSAGE, $h, [NullString]::Value, [NullString]::Value)
     if ($h -eq [IntPtr]::Zero) { break }
-    $owner = 0; [void][Win]::GetWindowThreadProcessId($h, [ref]$owner)
+    [uint32]$owner = 0; [void][Win]::GetWindowThreadProcessId($h, [ref]$owner)
     if ($owner -ne $proc.Id) { continue }
     $sb = New-Object System.Text.StringBuilder 256
     [void][Win]::GetClassNameW($h, $sb, 256)
     "$Label message-only: ClassName=`"$sb`""
+    $found++
   }
+  if (-not $found) { throw 'INVALID: no message-only window owned by Herdr' }
 } finally {
   if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
   & $core server stop
