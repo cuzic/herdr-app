@@ -164,6 +164,28 @@ def run_trials(proc, app, env, out, user, owner, enum_callback, fault, focus_cha
         transition_at = 743
         observed_gap = 183
         suffix = "どういう"
+    # IME_SEQUENCE picks a sequence whose first part is committed implicitly by
+    # the key at transition_at; the probe delays the UI thread right before it.
+    sequence = os.environ.get("IME_SEQUENCE", "ja")
+    mode_key = {"ja": 0xF2, "zh": 0x10, "ko": 0x15}[sequence]
+    if ima and sequence == "zh":
+        # Microsoft Pinyin: Space commits 你好, the next letters start 我们.
+        observed = [
+            (0, "NI"), (150, "HAO"), (400, " WO"), (650, "MEN"),
+            (900, 0x20), (960, -0x20), (1200, 0x0D), (1260, -0x0D),
+        ]
+        transition_at = 400
+        observed_gap = 250
+        suffix = None
+    if ima and sequence == "ko":
+        # Microsoft Korean IME (2-beolsik): the second S commits 안, then 녕.
+        observed = [
+            (0, "D"), (120, "K"), (240, "S"), (480, "SU"), (700, "D"),
+            (900, 0x20), (960, -0x20), (1200, 0x0D), (1260, -0x0D),
+        ]
+        transition_at = 480
+        observed_gap = 240
+        suffix = None
 
     def command(name, **args):
         result = subprocess.run([app, "do", name, json.dumps(args)], env=env,
@@ -172,8 +194,9 @@ def run_trials(proc, app, env, out, user, owner, enum_callback, fault, focus_cha
             raise SystemExit(f"INVALID: {name}: {result.stderr.decode(errors='replace')}")
         return json.loads(result.stdout)
 
-    def replay(mid_enter, gap_ms, focus_roundtrip=None, burst=False):
-        tap(0xF2)
+    def replay(mid_enter, gap_ms, focus_roundtrip=None, burst=False, probe=True):
+        if sequence == "ja":
+            tap(0xF2)
         time.sleep(.15)
         start = time.perf_counter()
         for offset, events in observed:
@@ -182,7 +205,7 @@ def run_trials(proc, app, env, out, user, owner, enum_callback, fault, focus_cha
                     offset = transition_at
                 offset += gap_ms - observed_gap
             time.sleep(max(0, start + offset / 1000 - time.perf_counter()))
-            if offset == transition_at + gap_ms - observed_gap and "GPUI_IME_TIMING_PROBE" in env:
+            if offset == transition_at + gap_ms - observed_gap and probe and "GPUI_IME_TIMING_PROBE" in env:
                 handle = user.GetForegroundWindow()
                 if owner(handle) != proc.pid:
                     raise SystemExit("INVALID: timing probe target is unfocused")
@@ -222,7 +245,11 @@ def run_trials(proc, app, env, out, user, owner, enum_callback, fault, focus_cha
             (f"ima-{gap}-{attempt}", False, gap)
             for gap in (10, observed_gap, 350) for attempt in range(4)
         ]
-    for label, mid_enter, gap_ms in trials:
+    if ima and sequence == "ko":
+        tap(mode_key)  # Microsoft Korean IME starts in English mode.
+    mode_retries = 0
+    while trials:
+        label, mid_enter, gap_ms = trials.pop(0)
         capture = out / f"{label}.txt"
         ready = out / f"{label}.ready"
         # The pane records text after the console line discipline receives it.
@@ -284,7 +311,9 @@ def run_trials(proc, app, env, out, user, owner, enum_callback, fault, focus_cha
 
         time.sleep(.5)
         print(f"trial {label} ns={time.time_ns()} tick_ms={ct.windll.kernel32.GetTickCount() & 0xffffffff}", flush=True)
-        replay(mid_enter, gap_ms, focus_roundtrip, burst_control and not mid_enter)
+        # Japanese controls commit with Enter; the others commit without the probe.
+        probe = not (label.startswith("control") and sequence != "ja")
+        replay(mid_enter, gap_ms, focus_roundtrip, burst_control and not mid_enter, probe)
         for _ in range(40):
             if capture.exists() and capture.stat().st_size:
                 break
@@ -293,8 +322,14 @@ def run_trials(proc, app, env, out, user, owner, enum_callback, fault, focus_cha
             count = other_capture.stat().st_size if other_capture.exists() else 0
             print(f"other pane {label} bytes={count}", flush=True)
         value = capture.read_text(encoding="utf-8") if capture.exists() else ""
-        results.append((label, value))
         print(label, ascii(value), flush=True)
+        if label.startswith("control") and sequence != "ja" and value.isascii() and mode_retries < 2:
+            # The IME is in its Latin mode: toggle it and run the control again.
+            mode_retries += 1
+            tap(mode_key)
+            trials.insert(0, (f"control-retry{mode_retries}", mid_enter, gap_ms))
+            continue
+        results.append((label, value))
 
     if fault:
         _, received = results[0]
@@ -309,9 +344,18 @@ def run_trials(proc, app, env, out, user, owner, enum_callback, fault, focus_cha
         return
 
     control = "".join(results[0][1].splitlines())
+    implicit = [(label, "".join(value.splitlines())) for label, value in results[1:]]
+    if suffix is None:
+        if control.isascii():
+            raise SystemExit(f"INVALID: the control did not compose text: {ascii(control)}")
+        print(f"control {ascii(control)}", flush=True)
+        lost = [(label, value) for label, value in implicit if value != control]
+        if lost:
+            raise SystemExit(f"REPRODUCED: implicit commits differ from the control {ascii(lost)}")
+        print(f"PASS: control and implicit commits agree in {len(implicit)} trials")
+        return
     if not control.endswith(suffix) or control == suffix:
         raise SystemExit("INVALID: explicit commit did not establish the Japanese control")
-    implicit = [(label, "".join(value.splitlines())) for label, value in results[1:]]
     missing = [label for label, value in implicit if value == suffix]
     if missing:
         raise SystemExit(f"REPRODUCED: only the second composition reached {missing}")
